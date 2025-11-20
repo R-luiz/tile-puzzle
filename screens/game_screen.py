@@ -62,6 +62,7 @@ class GameScreen:
 
         # Drag and drop state
         self.dragging_tile: Optional[Tuple[int, int]] = None  # (row, col) being dragged
+        self.dragging_group: Optional[set] = None  # Set of positions if dragging a merged group
         self.drag_offset: Tuple[int, int] = (0, 0)
         self.hovered_tile: Optional[Tuple[int, int]] = None
 
@@ -229,11 +230,23 @@ class GameScreen:
             self.show_solution = not self.show_solution
             return
 
-        # Start dragging a tile
+        # Start dragging a tile or group
         tile_coords = self._get_tile_at_position(mouse_pos)
         if tile_coords is not None:
-            self.dragging_tile = tile_coords
             row, col = tile_coords
+
+            # Check if this tile is part of a merged group
+            merged_group = self.puzzle_state.get_group_containing_position(row, col)
+
+            if merged_group is not None:
+                # Dragging a merged group
+                self.dragging_group = merged_group
+                self.dragging_tile = tile_coords
+            else:
+                # Dragging a single tile
+                self.dragging_tile = tile_coords
+                self.dragging_group = None
+
             tile_rect = self._get_tile_rect(row, col)
             self.drag_offset = (
                 mouse_pos[0] - tile_rect.x,
@@ -252,10 +265,23 @@ class GameScreen:
             drop_tile = self._get_tile_at_position(mouse_pos)
 
             if drop_tile is not None and drop_tile != self.dragging_tile:
-                # Swap the tiles
-                row1, col1 = self.dragging_tile
-                row2, col2 = drop_tile
-                self.puzzle_state.swap_tiles(row1, col1, row2, col2)
+                if self.dragging_group is not None:
+                    # Swapping a merged group
+                    row2, col2 = drop_tile
+                    # Check if this position is part of the same group we're dragging
+                    if drop_tile not in self.dragging_group:
+                        # Attempt to swap the group
+                        self.puzzle_state.swap_groups(self.dragging_group, row2, col2)
+                else:
+                    # Swapping a single tile
+                    row1, col1 = self.dragging_tile
+                    row2, col2 = drop_tile
+
+                    # Check if we can swap (single tile with single tile)
+                    target_group = self.puzzle_state.get_group_containing_position(row2, col2)
+                    if target_group is None:
+                        # Target is a single tile, we can swap
+                        self.puzzle_state.swap_tiles(row1, col1, row2, col2)
 
                 # Check if puzzle is solved
                 if self.puzzle_state.is_solved():
@@ -263,6 +289,7 @@ class GameScreen:
 
             # Reset dragging state
             self.dragging_tile = None
+            self.dragging_group = None
             self.drag_offset = (0, 0)
 
     def _get_tile_at_position(self, pos: Tuple[int, int]) -> Optional[Tuple[int, int]]:
@@ -328,15 +355,26 @@ class GameScreen:
         title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 30))
         self.screen.blit(title_text, title_rect)
 
-        # Draw all puzzle tiles
+        # Draw all puzzle tiles (skip those being dragged)
         for row in range(self.tiles_y):
             for col in range(self.tiles_x):
-                if (row, col) != self.dragging_tile:
-                    self._draw_tile(row, col)
+                # Skip if this tile is being dragged
+                if self.dragging_group is not None and (row, col) in self.dragging_group:
+                    continue
+                elif (row, col) == self.dragging_tile and self.dragging_group is None:
+                    continue
 
-        # Draw dragging tile on top
+                self._draw_tile(row, col)
+
+        # Draw merged group borders
+        self._draw_merged_group_borders()
+
+        # Draw dragging tile/group on top
         if self.dragging_tile is not None:
-            self._draw_dragging_tile()
+            if self.dragging_group is not None:
+                self._draw_dragging_group()
+            else:
+                self._draw_dragging_tile()
 
         # Draw UI buttons
         self._draw_buttons()
@@ -358,7 +396,7 @@ class GameScreen:
 
     def _draw_tile(self, row: int, col: int) -> None:
         """
-        Draw a single puzzle tile with border.
+        Draw a single puzzle tile (without border - borders drawn separately for merged groups).
 
         Args:
             row: Tile row index (position)
@@ -376,25 +414,109 @@ class GameScreen:
         # Draw the tile image
         self.screen.blit(tile_surface, tile_rect)
 
-        # Determine border color based on state
-        border_color = COLOR_TILE_BORDER
+        # Only draw border if tile is NOT part of a merged group
+        merged_group = self.puzzle_state.get_group_containing_position(row, col)
+        if merged_group is None:
+            # Determine border color based on state
+            border_color = COLOR_TILE_BORDER
 
-        # Highlight if hovering (and not dragging)
-        if (row, col) == self.hovered_tile and self.dragging_tile is None:
-            border_color = COLOR_TILE_HOVER
+            # Highlight if hovering (and not dragging)
+            if (row, col) == self.hovered_tile and self.dragging_tile is None:
+                border_color = COLOR_TILE_HOVER
 
-        # Show solution mode - highlight correctly placed tiles
-        if self.show_solution:
-            if (tile_original_row, tile_original_col) == (row, col):
-                border_color = COLOR_SUCCESS
+            # Show solution mode - highlight correctly placed tiles
+            if self.show_solution:
+                if (tile_original_row, tile_original_col) == (row, col):
+                    border_color = COLOR_SUCCESS
 
-        # Draw border around the tile
-        pygame.draw.rect(
-            self.screen,
-            border_color,
-            tile_rect,
-            TILE_BORDER_WIDTH + (2 if border_color != COLOR_TILE_BORDER else 0)
-        )
+            # Draw border around the tile
+            pygame.draw.rect(
+                self.screen,
+                border_color,
+                tile_rect,
+                TILE_BORDER_WIDTH + (2 if border_color != COLOR_TILE_BORDER else 0)
+            )
+
+    def _draw_merged_group_borders(self) -> None:
+        """
+        Draw borders around merged tile groups.
+        """
+        for group in self.puzzle_state.merged_groups:
+            # Skip if this group is being dragged
+            if self.dragging_group is not None and group == self.dragging_group:
+                continue
+
+            # Determine border color
+            border_color = COLOR_SUCCESS if self.show_solution else COLOR_TILE_BORDER
+
+            # Check if any tile in the group is hovered
+            is_hovered = False
+            if self.dragging_tile is None and self.hovered_tile is not None:
+                if self.hovered_tile in group:
+                    is_hovered = True
+                    border_color = COLOR_TILE_HOVER
+
+            # Draw border around the entire group
+            self._draw_group_border(group, border_color, TILE_BORDER_WIDTH + (2 if is_hovered else 0))
+
+    def _draw_group_border(
+        self,
+        group: set,
+        color: Tuple[int, int, int],
+        width: int
+    ) -> None:
+        """
+        Draw a border around a group of tiles.
+
+        Args:
+            group: Set of (row, col) positions in the group
+            color: RGB color for the border
+            width: Border width
+        """
+        # For each position in the group, draw borders only on edges that are external
+        for row, col in group:
+            tile_rect = self._get_tile_rect(row, col)
+
+            # Check each side to see if it's an external edge
+            # Top edge
+            if (row - 1, col) not in group:
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (tile_rect.left, tile_rect.top),
+                    (tile_rect.right, tile_rect.top),
+                    width
+                )
+
+            # Bottom edge
+            if (row + 1, col) not in group:
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (tile_rect.left, tile_rect.bottom),
+                    (tile_rect.right, tile_rect.bottom),
+                    width
+                )
+
+            # Left edge
+            if (row, col - 1) not in group:
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (tile_rect.left, tile_rect.top),
+                    (tile_rect.left, tile_rect.bottom),
+                    width
+                )
+
+            # Right edge
+            if (row, col + 1) not in group:
+                pygame.draw.line(
+                    self.screen,
+                    color,
+                    (tile_rect.right, tile_rect.top),
+                    (tile_rect.right, tile_rect.bottom),
+                    width
+                )
 
     def _draw_dragging_tile(self) -> None:
         """
@@ -428,6 +550,94 @@ class GameScreen:
             drag_rect,
             TILE_BORDER_WIDTH + 2
         )
+
+    def _draw_dragging_group(self) -> None:
+        """
+        Draw the merged group currently being dragged at the mouse position.
+        """
+        if self.dragging_group is None or self.dragging_tile is None:
+            return
+
+        mouse_pos = pygame.mouse.get_pos()
+
+        # Calculate the offset for the entire group based on the dragged tile
+        drag_row, drag_col = self.dragging_tile
+        drag_tile_rect = self._get_tile_rect(drag_row, drag_col)
+
+        # Offset for the whole group
+        group_offset_x = mouse_pos[0] - self.drag_offset[0] - drag_tile_rect.x
+        group_offset_y = mouse_pos[1] - self.drag_offset[1] - drag_tile_rect.y
+
+        # Draw all tiles in the group
+        for row, col in self.dragging_group:
+            # Get which original tile this is
+            tile_original_row, tile_original_col = self.puzzle_state.get_tile_at_position(row, col)
+            tile_surface = self.tiles[tile_original_row][tile_original_col].copy()
+
+            # Apply transparency
+            tile_surface.set_alpha(TILE_DRAG_ALPHA)
+
+            # Calculate position with group offset
+            tile_rect = self._get_tile_rect(row, col)
+            draw_x = tile_rect.x + group_offset_x
+            draw_y = tile_rect.y + group_offset_y
+
+            # Draw the tile
+            self.screen.blit(tile_surface, (draw_x, draw_y))
+
+        # Draw border around the entire group
+        # Calculate bounding box of the group in screen coordinates
+        min_row = min(r for r, c in self.dragging_group)
+        max_row = max(r for r, c in self.dragging_group)
+        min_col = min(c for r, c in self.dragging_group)
+        max_col = max(c for r, c in self.dragging_group)
+
+        # Draw external borders for the dragging group
+        for row, col in self.dragging_group:
+            tile_rect = self._get_tile_rect(row, col)
+            draw_x = tile_rect.x + group_offset_x
+            draw_y = tile_rect.y + group_offset_y
+
+            # Check each side to see if it's an external edge
+            # Top edge
+            if (row - 1, col) not in self.dragging_group:
+                pygame.draw.line(
+                    self.screen,
+                    COLOR_TILE_DRAGGING,
+                    (draw_x, draw_y),
+                    (draw_x + self.tile_width, draw_y),
+                    TILE_BORDER_WIDTH + 2
+                )
+
+            # Bottom edge
+            if (row + 1, col) not in self.dragging_group:
+                pygame.draw.line(
+                    self.screen,
+                    COLOR_TILE_DRAGGING,
+                    (draw_x, draw_y + self.tile_height),
+                    (draw_x + self.tile_width, draw_y + self.tile_height),
+                    TILE_BORDER_WIDTH + 2
+                )
+
+            # Left edge
+            if (row, col - 1) not in self.dragging_group:
+                pygame.draw.line(
+                    self.screen,
+                    COLOR_TILE_DRAGGING,
+                    (draw_x, draw_y),
+                    (draw_x, draw_y + self.tile_height),
+                    TILE_BORDER_WIDTH + 2
+                )
+
+            # Right edge
+            if (row, col + 1) not in self.dragging_group:
+                pygame.draw.line(
+                    self.screen,
+                    COLOR_TILE_DRAGGING,
+                    (draw_x + self.tile_width, draw_y),
+                    (draw_x + self.tile_width, draw_y + self.tile_height),
+                    TILE_BORDER_WIDTH + 2
+                )
 
     def _draw_buttons(self) -> None:
         """

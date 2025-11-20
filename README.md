@@ -5,13 +5,15 @@ A fully interactive puzzle game built with Python and Pygame. Select an image, c
 ## Features
 
 - **Interactive Drag & Drop** - Drag tiles to swap positions and solve the puzzle
+- **Smart Tile Merging** - Adjacent correctly placed tiles automatically merge and move as one!
+- **Progressive Difficulty** - Puzzle gets easier as you correctly place more tiles
 - **Image Selection Menu** - Choose from images in your images folder
 - **Customizable Puzzle Size** - Configure tiles from 2x2 up to 20x20
 - **Auto-Shuffle** - Puzzle automatically shuffles when you start
 - **Win Detection** - Victory screen when puzzle is solved
 - **Solution Helper** - Press Space to highlight correctly placed tiles
 - **Responsive Design** - Images automatically resize to fit your screen
-- **Smooth Visual Feedback** - Hover effects, drag transparency, and clean borders
+- **Smooth Visual Feedback** - Hover effects, drag transparency, and seamless merged tiles
 
 ## Installation
 
@@ -38,6 +40,9 @@ python main.py
 3. **Solve the Puzzle** - The puzzle starts shuffled - drag tiles to swap and recreate the image
    - Click and hold a tile to start dragging
    - Drag it over another tile and release to swap positions
+   - **Tiles automatically merge** when correctly placed next to each other!
+   - Merged tiles move together as one larger piece
+   - You can only swap tiles/groups of matching sizes
    - Use the Solution button or Space key to see which tiles are correctly placed
    - Press S to shuffle again, R to restart
    - Victory screen appears when puzzle is solved!
